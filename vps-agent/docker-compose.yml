@@ -12,6 +12,7 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - HOSTNAME_DISPLAY=srv1573728
     ports:
       - "72.62.96.98:8765:8765"
     # Traefik uses host networking so it can't join other networks.
