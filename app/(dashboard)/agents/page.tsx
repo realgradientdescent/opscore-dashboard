@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { useAgents } from "@/lib/hooks";
 import { cn, formatUptime, formatNumber } from "@/lib/utils";
 import { motion } from "framer-motion";
@@ -20,10 +21,13 @@ const statusDot = (s: string) =>
     : "bg-danger";
 
 function AgentPanel({ agent }: { agent: ReturnType<typeof mockAgents>[0] }) {
-  const tokenHistory = Array.from({ length: 20 }, (_, i) => ({
-    t: i,
-    tokens: 200 + Math.random() * 800 + Math.sin(i / 3) * 200,
-  }));
+  const [tokenHistory, setTokenHistory] = useState<{ t: number; tokens: number }[]>([]);
+  useEffect(() => {
+    setTokenHistory(Array.from({ length: 20 }, (_, i) => ({
+      t: i,
+      tokens: 200 + Math.random() * 800 + Math.sin(i / 3) * 200,
+    })));
+  }, []);
 
   return (
     <div className="glass-card p-4 space-y-4">

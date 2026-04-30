@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useTokens } from "@/lib/hooks";
 import { cn, formatNumber } from "@/lib/utils";
 import RateLimitGauge from "@/components/charts/RateLimitGauge";
@@ -59,8 +59,13 @@ function hourlyTokenData() {
 
 export default function TokensPage() {
   const [activeProvider, setActiveProvider] = useState<Provider>("anthropic");
-  const tokenData = mockTokenData(activeProvider);
-  const hourly = hourlyTokenData();
+  const [tokenData, setTokenData] = useState(() => mockTokenData("anthropic"));
+  const [hourly, setHourly] = useState<ReturnType<typeof hourlyTokenData>>([]);
+
+  useEffect(() => {
+    setTokenData(mockTokenData(activeProvider));
+    setHourly(hourlyTokenData());
+  }, [activeProvider]);
   const color = providerMeta[activeProvider].color;
 
   const rpmPct = (tokenData.rate_limit.rpm_used / tokenData.rate_limit.rpm) * 100;

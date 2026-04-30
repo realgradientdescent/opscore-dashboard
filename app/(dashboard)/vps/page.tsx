@@ -18,14 +18,17 @@ import {
 
 export default function VpsPage() {
   const { data: health } = useHealth();
-  const [diskIo, setDiskIo] = useState(
-    Array.from({ length: 30 }, (_, i) => ({
+  const [diskIo, setDiskIo] = useState<{ time: string; read: number; write: number }[]>([]);
+  const [netData, setNetData] = useState<ReturnType<typeof generateTimelineData>>([]);
+
+  useEffect(() => {
+    setDiskIo(Array.from({ length: 30 }, (_, i) => ({
       time: `${i}`,
       read: Math.random() * 50,
       write: Math.random() * 30,
-    }))
-  );
-  const [netData, setNetData] = useState(generateTimelineData(30));
+    })));
+    setNetData(generateTimelineData(30));
+  }, []);
 
   const h = health ?? {
     cpu_percent: 34.2,

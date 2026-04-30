@@ -15,8 +15,17 @@ export default function OverviewPage() {
   const { data: health } = useHealth();
   const { data: containers } = useContainers();
   const { data: agents } = useAgents();
-  const [timeline, setTimeline] = useState(generateTimelineData());
-  const [costData] = useState(generateCostData(7));
+  const [timeline, setTimeline] = useState<ReturnType<typeof generateTimelineData>>([]);
+  const [costData, setCostData] = useState<ReturnType<typeof generateCostData>>([]);
+  const [cpuSparkline, setCpuSparkline] = useState<number[]>([]);
+  const [memSparkline, setMemSparkline] = useState<number[]>([]);
+
+  useEffect(() => {
+    setTimeline(generateTimelineData());
+    setCostData(generateCostData(7));
+    setCpuSparkline(generateSparkline());
+    setMemSparkline(generateSparkline(20, 40, 10));
+  }, []);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -58,7 +67,7 @@ export default function OverviewPage() {
               ? "warning"
               : "accent"
           }
-          sparkline={generateSparkline()}
+          sparkline={cpuSparkline}
         />
         <KpiCard
           title="Memory"
@@ -66,7 +75,7 @@ export default function OverviewPage() {
           subtitle={`/ ${(health?.memory.total_gb ?? 16).toFixed(0)} GB`}
           icon={MemoryStick}
           color="success"
-          sparkline={generateSparkline(20, 40, 10)}
+          sparkline={memSparkline}
         />
         <KpiCard
           title="Containers"
