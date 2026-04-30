@@ -1,0 +1,18 @@
+version: "3.8"
+
+services:
+  opscore-agent:
+    build: .
+    container_name: opscore-agent
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - API_KEY=${OPSCORE_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+    ports:
+      - "72.62.96.98:8765:8765"
+    # Traefik uses host networking so it can't join other networks.
+    # Port 8765 is bound to the public IP and protected by X-API-Key auth.
