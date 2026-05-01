@@ -8,8 +8,17 @@ import RateLimitGauge from "@/components/charts/RateLimitGauge";
 import CostBreakdownChart from "@/components/charts/CostBreakdownChart";
 import { generateTimelineData, generateSparkline, generateCostData } from "@/lib/mock-data";
 import { useHealth, useContainers, useAgents } from "@/lib/hooks";
+import type { AgentData } from "@/lib/api";
 import { cn, formatCurrency, formatUptime } from "@/lib/utils";
 import { motion } from "framer-motion";
+
+function summarizeAgent(agent: AgentData) {
+  if (agent.current_task?.trim()) return agent.current_task.trim();
+  if (agent.status === "unavailable") return "Telemetry unavailable";
+  if (agent.status === "running" || agent.status === "active") return "No active task reported";
+  if (agent.error) return agent.error;
+  return "Idle";
+}
 
 export default function OverviewPage() {
   const { data: health } = useHealth();
@@ -109,10 +118,7 @@ export default function OverviewPage() {
               Agent Status
             </h3>
             <div className="space-y-3">
-              {(agents ?? [
-                { name: "OpenClaw", status: "running", uptime_seconds: 86400, current_task: "Analyzing repo...", last_activity: "3s ago" },
-                { name: "Hermes", status: "running", uptime_seconds: 172800, current_task: "Processing queue", last_activity: "12s ago" },
-              ]).map((agent) => (
+              {(agents ?? []).map((agent) => (
                 <div key={agent.name} className="p-3 rounded-lg bg-white/5 border border-white/5">
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-2">
@@ -122,8 +128,8 @@ export default function OverviewPage() {
                           agent.status === "running" || agent.status === "active"
                             ? "bg-success"
                             : agent.status === "idle"
-                            ? "bg-warning"
-                            : "bg-danger"
+                              ? "bg-warning"
+                              : "bg-danger"
                         )}
                       />
                       <span className="text-sm font-medium">{agent.name}</span>
@@ -133,10 +139,15 @@ export default function OverviewPage() {
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground truncate">
-                    {agent.current_task ?? "Idle"}
+                    {summarizeAgent(agent)}
                   </p>
                 </div>
               ))}
+              {(!agents || agents.length === 0) && (
+                <div className="p-3 rounded-lg bg-white/5 border border-dashed border-white/10 text-xs text-muted-foreground">
+                  No agent telemetry available.
+                </div>
+              )}
             </div>
           </div>
         </div>

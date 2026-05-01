@@ -47,17 +47,19 @@ export interface AgentData {
   name: string;
   status: string;
   uptime_seconds: number;
-  last_activity: string;
+  last_activity?: string | null;
   subagents?: {
     name: string;
     status: string;
-    current_task: string;
-    tokens_session: number;
-    last_active: string;
+    current_task?: string | null;
+    tokens_session?: number;
+    last_active?: string | null;
   }[];
   tokens_session?: number;
-  current_task?: string;
-  model?: string;
+  current_task?: string | null;
+  model?: string | null;
+  container?: string;
+  error?: string | null;
 }
 
 export interface TokenProvider {
