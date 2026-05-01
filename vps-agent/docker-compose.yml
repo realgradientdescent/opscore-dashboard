@@ -8,6 +8,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /docker/hermes-agent-6aos/data:/opt/data:ro
+      - ${OPENCLAW_HOST_STATE_DIR:-/docker/openclaw-1ovr/data/.openclaw}:/opt/openclaw-state:ro
     environment:
       - API_KEY=${OPSCORE_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
@@ -16,6 +17,7 @@ services:
       - HOSTNAME_DISPLAY=srv1573728
       - HERMES_CONTAINER_NAME=hermes-agent-6aos-hermes-agent-1
       - OPENCLAW_CONTAINER_NAME=openclaw-1ovr-openclaw-1
+      - OPENCLAW_STATE_DIR=/opt/openclaw-state
     ports:
       - "72.62.96.98:8765:8765"
     # Traefik uses host networking so it can't join other networks.

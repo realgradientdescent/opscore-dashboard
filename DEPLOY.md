@@ -25,6 +25,12 @@ mkdir -p /opt/opscore
 # copy vps-agent/ contents to /opt/opscore/vps-agent/
 ```
 
+The VPS agent must be able to read both:
+- Hermes state at `/docker/hermes-agent-6aos/data`
+- OpenClaw state at `/docker/openclaw-1ovr/data/.openclaw`
+
+If your host paths differ, set `OPENCLAW_HOST_STATE_DIR` before `docker compose up` or edit the compose file.
+
 Create the env file:
 ```bash
 cd /opt/opscore/vps-agent
@@ -37,6 +43,8 @@ Build and start the agent (it will auto-join the Traefik network):
 ```bash
 docker compose up -d --build
 ```
+
+After startup, the container should have OpenClaw state mounted at `/opt/openclaw-state` and the agent will read `OPENCLAW_STATE_DIR=/opt/openclaw-state`.
 
 Verify it's running:
 ```bash

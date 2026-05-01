@@ -1,6 +1,8 @@
+import json
 import os
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import docker
@@ -8,11 +10,16 @@ from fastapi import APIRouter
 
 router = APIRouter(tags=["agents"])
 
+OPENCLAW_STATE_DIR = Path(os.environ.get("OPENCLAW_STATE_DIR", "/data/.openclaw"))
+OPENCLAW_CONFIG_PATH = OPENCLAW_STATE_DIR / "openclaw.json"
+OPENCLAW_TASKS_DB_PATH = OPENCLAW_STATE_DIR / "tasks" / "runs.sqlite"
+OPENCLAW_SUBAGENTS_PATH = OPENCLAW_STATE_DIR / "subagents" / "runs.json"
+OPENCLAW_AGENTS_DIR = OPENCLAW_STATE_DIR / "agents"
+
 AGENT_CONTAINERS = {
     "openclaw": {
         "container_name": os.environ.get("OPENCLAW_CONTAINER_NAME", "openclaw-1ovr"),
         "display_name": "OpenClaw",
-        "subagents": ["Researcher", "Writer", "Reviewer", "Publisher"],
     },
     "hermes": {
         "container_name": os.environ.get("HERMES_CONTAINER_NAME", "hermes-agent-6aos"),
@@ -34,11 +41,14 @@ def get_client():
         return None
 
 
-def _iso_from_timestamp(ts: float | int | None) -> str | None:
-    if not ts:
+def _iso_from_timestamp(ts: float | int | None, *, milliseconds: bool = False) -> str | None:
+    if ts in (None, ""):
         return None
     try:
-        return datetime.fromtimestamp(float(ts), timezone.utc).isoformat()
+        value = float(ts)
+        if milliseconds:
+            value /= 1000.0
+        return datetime.fromtimestamp(value, timezone.utc).isoformat()
     except Exception:
         return None
 
@@ -52,7 +62,7 @@ def _excerpt(text: str | None, limit: int = 96) -> str | None:
     return cleaned if len(cleaned) <= limit else cleaned[: limit - 1].rstrip() + "…"
 
 
-def _safe_connect(path: str) -> sqlite3.Connection | None:
+def _safe_connect(path: str | Path) -> sqlite3.Connection | None:
     if not os.path.exists(path):
         return None
     try:
@@ -61,6 +71,56 @@ def _safe_connect(path: str) -> sqlite3.Connection | None:
         return conn
     except Exception:
         return None
+
+
+def _load_json(path: Path) -> Any:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _classify_openclaw_session_key(session_key: str) -> str:
+    if ":heartbeat" in session_key:
+        return "heartbeat"
+    if ":run:" in session_key:
+        return "run"
+    if ":subagent:" in session_key:
+        return "subagent"
+    if ":cron:" in session_key:
+        return "cron"
+    if ":telegram:" in session_key:
+        return "chat"
+    if session_key.endswith(":main"):
+        return "main"
+    return "other"
+
+
+def _dedupe_openclaw_sessions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_identity: dict[str, dict[str, Any]] = {}
+
+    def rank(row: dict[str, Any]) -> tuple[int, float]:
+        kind = str(row.get("sessionKind") or "")
+        session_id = row.get("sessionId")
+        canonical_bonus = 0 if kind != "run" else -1
+        heartbeat_penalty = -2 if kind == "heartbeat" else 0
+        has_session_bonus = 1 if session_id else 0
+        updated = float(row.get("updatedAt") or 0)
+        return (canonical_bonus + heartbeat_penalty + has_session_bonus, updated)
+
+    for row in rows:
+        identity = str(row.get("sessionId") or row.get("key") or "")
+        if not identity:
+            continue
+        current = by_identity.get(identity)
+        if current is None or rank(row) > rank(current):
+            by_identity[identity] = row
+
+    deduped = list(by_identity.values())
+    deduped.sort(key=lambda item: float(item.get("updatedAt") or 0), reverse=True)
+    return deduped
 
 
 def _load_recent_session_snapshot() -> dict[str, Any] | None:
@@ -169,6 +229,201 @@ def _read_recent_inbound_message() -> tuple[str | None, str | None]:
     return None, None
 
 
+def _load_openclaw_sessions() -> list[dict[str, Any]]:
+    sessions: list[dict[str, Any]] = []
+    if not OPENCLAW_AGENTS_DIR.exists():
+        return sessions
+
+    for store_path in OPENCLAW_AGENTS_DIR.glob("*/sessions/sessions.json"):
+        data = _load_json(store_path)
+        if not isinstance(data, dict):
+            continue
+        for session_key, payload in data.items():
+            if not isinstance(payload, dict):
+                continue
+            row = dict(payload)
+            row["key"] = session_key
+            row["sessionKind"] = _classify_openclaw_session_key(session_key)
+            agent_id = session_key.split(":", 2)[1] if session_key.startswith("agent:") and ":" in session_key else None
+            row.setdefault("agentId", agent_id)
+            sessions.append(row)
+    return _dedupe_openclaw_sessions(sessions)
+
+
+def _load_openclaw_task_snapshot() -> dict[str, Any] | None:
+    conn = _safe_connect(OPENCLAW_TASKS_DB_PATH)
+    if conn is None:
+        return None
+    try:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM task_runs
+            ORDER BY
+              CASE WHEN status = 'running' THEN 0 ELSE 1 END,
+              COALESCE(last_event_at, started_at, created_at) DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        return dict(row) if row else None
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def _openclaw_configured_providers() -> list[str]:
+    data = _load_json(OPENCLAW_CONFIG_PATH)
+    providers = data.get("models", {}).get("providers", {}) if isinstance(data, dict) else {}
+    if not isinstance(providers, dict):
+        return []
+    return sorted([key for key, value in providers.items() if isinstance(value, dict) and value.get("enabled", True)])
+
+
+def _build_openclaw_subagents(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    data = _load_json(OPENCLAW_SUBAGENTS_PATH)
+    runs = data.get("runs") if isinstance(data, dict) else None
+    if not isinstance(runs, list):
+        runs = []
+
+    session_by_key = {row.get("key"): row for row in sessions if row.get("key")}
+    conn = _safe_connect(OPENCLAW_TASKS_DB_PATH)
+    task_by_run_id: dict[str, dict[str, Any]] = {}
+    if conn is not None:
+        try:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM task_runs
+                WHERE runtime = 'subagent' OR runtime = 'cli'
+                ORDER BY COALESCE(last_event_at, started_at, created_at) DESC
+                """
+            ).fetchall()
+            for row in rows:
+                payload = dict(row)
+                for key in (payload.get("run_id"), payload.get("source_id")):
+                    if key:
+                        task_by_run_id.setdefault(str(key), payload)
+        except Exception:
+            pass
+        finally:
+            conn.close()
+
+    subagents: list[dict[str, Any]] = []
+    for run in sorted(runs, key=lambda item: float(item.get("startedAt") or item.get("createdAt") or 0), reverse=True):
+        child_session_key = run.get("childSessionKey")
+        task_row = task_by_run_id.get(str(run.get("runId") or ""), {})
+        session = session_by_key.get(child_session_key, {})
+        status = task_row.get("status") or ("running" if run.get("startedAt") and not run.get("completedAt") else "unknown")
+        agent_id = (child_session_key or "").split(":", 2)[1] if child_session_key and child_session_key.startswith("agent:") else None
+        short_id = str(run.get("runId") or "")[:8] or "subagent"
+        current_task = _excerpt(task_row.get("task") or run.get("task"), 110)
+        last_active_iso = _iso_from_timestamp(
+            task_row.get("last_event_at") or run.get("startedAt") or run.get("createdAt"),
+            milliseconds=True,
+        )
+        subagents.append(
+            {
+                "name": f"{agent_id or 'subagent'}:{short_id}",
+                "status": "active" if status == "running" else status,
+                "current_task": current_task,
+                "tokens_session": session.get("totalTokens"),
+                "last_active": last_active_iso,
+            }
+        )
+
+    seen_names = {item["name"] for item in subagents if item.get("name")}
+    fallback_candidates = [row for row in sessions if row.get("sessionKind") == "subagent"]
+    now_ms = datetime.now(timezone.utc).timestamp() * 1000.0
+    recent_cutoff_ms = now_ms - (14 * 24 * 60 * 60 * 1000)
+    recent_candidates = [row for row in fallback_candidates if float(row.get("updatedAt") or 0) >= recent_cutoff_ms]
+    source_rows = recent_candidates or fallback_candidates
+
+    for session in source_rows:
+        if session.get("sessionKind") != "subagent":
+            continue
+        session_key = str(session.get("key") or "")
+        agent_id = session.get("agentId") or (session_key.split(":", 2)[1] if session_key.startswith("agent:") else None)
+        short_id = session_key.rsplit(":", 1)[-1][:8] if session_key else "subagent"
+        name = f"{agent_id or 'subagent'}:{short_id}"
+        if name in seen_names:
+            continue
+        subagents.append(
+            {
+                "name": name,
+                "status": "idle",
+                "current_task": _excerpt(session.get("title") or session.get("summary") or session_key, 110),
+                "tokens_session": session.get("totalTokens"),
+                "last_active": _iso_from_timestamp(session.get("updatedAt"), milliseconds=True),
+            }
+        )
+        seen_names.add(name)
+
+    subagents.sort(
+        key=lambda item: item.get("last_active") or "",
+        reverse=True,
+    )
+    return subagents[:8]
+
+
+def _populate_openclaw_telemetry(result: dict[str, Any], container_status: str) -> None:
+    sessions = _load_openclaw_sessions()
+    task = _load_openclaw_task_snapshot()
+    primary_kinds = {"chat", "main"}
+    latest_session = next((row for row in sessions if row.get("sessionKind") in primary_kinds), None)
+    if latest_session is None:
+        latest_session = next((row for row in sessions if row.get("sessionKind") not in {"heartbeat", "run"}), sessions[0] if sessions else None)
+
+    subagents = _build_openclaw_subagents(sessions)
+    result["subagents"] = subagents
+
+    if latest_session:
+        updated_at_iso = _iso_from_timestamp(latest_session.get("updatedAt"), milliseconds=True)
+        result["last_activity_at"] = updated_at_iso
+        session_key = latest_session.get("key")
+        if updated_at_iso and session_key:
+            result["last_activity"] = f"{updated_at_iso} · {session_key}"
+        result["tokens_session"] = latest_session.get("totalTokens")
+        result["model"] = latest_session.get("model")
+        result["provider"] = latest_session.get("modelProvider")
+        result["session_id"] = latest_session.get("sessionId")
+        result["session_source"] = latest_session.get("key")
+
+    if task:
+        task_excerpt = _excerpt(task.get("task") or task.get("label"), 140)
+        result["current_task"] = task_excerpt
+        if not result.get("session_source") and task.get("child_session_key"):
+            result["session_source"] = task.get("child_session_key")
+        if not result.get("last_activity_at"):
+            result["last_activity_at"] = _iso_from_timestamp(
+                task.get("last_event_at") or task.get("started_at") or task.get("created_at"),
+                milliseconds=True,
+            )
+        if result.get("last_activity_at") and not result.get("last_activity"):
+            result["last_activity"] = f"{result['last_activity_at']} · {task.get('status') or task.get('runtime') or 'task'}"
+        if task.get("status") == "running":
+            result["status"] = "active"
+        elif container_status == "running":
+            result["status"] = "idle"
+        if task.get("error"):
+            result["error"] = _excerpt(task.get("error"), 140)
+
+    if result.get("status") == "unknown" and container_status == "running":
+        result["status"] = "idle"
+
+    if not result.get("provider"):
+        providers = _openclaw_configured_providers()
+        if providers:
+            result["provider"] = providers[0]
+
+    if not result.get("model"):
+        config = _load_json(OPENCLAW_CONFIG_PATH)
+        defaults = config.get("agents", {}).get("defaults", {}) if isinstance(config, dict) else {}
+        model = defaults.get("model")
+        if isinstance(model, str):
+            result["model"] = model
+
+
 def _populate_hermes_telemetry(result: dict[str, Any], container_status: str) -> None:
     snapshot = _load_recent_session_snapshot()
     inbound_ts, inbound_excerpt = _read_recent_inbound_message()
@@ -246,6 +501,8 @@ def inspect_agent(client, agent_key: str):
         result["error"] = "Cannot connect to Docker"
         if agent_key == "hermes":
             _populate_hermes_telemetry(result, result["status"])
+        elif agent_key == "openclaw":
+            _populate_openclaw_telemetry(result, result["status"])
         return result
 
     try:
@@ -269,6 +526,8 @@ def inspect_agent(client, agent_key: str):
 
         if agent_key == "hermes":
             _populate_hermes_telemetry(result, container.status)
+        elif agent_key == "openclaw":
+            _populate_openclaw_telemetry(result, container.status)
         else:
             try:
                 logs = container.logs(tail=1, timestamps=True).decode("utf-8", errors="replace").strip()
@@ -277,24 +536,20 @@ def inspect_agent(client, agent_key: str):
             except Exception:
                 pass
 
-        for sa in spec["subagents"]:
-            result["subagents"].append({
-                "name": sa,
-                "status": "active" if container.status == "running" else "inactive",
-            })
-
     except docker.errors.NotFound:
         result["status"] = "not_found"
         result["error"] = f"Container '{spec['container_name']}' not found"
-        for sa in spec["subagents"]:
-            result["subagents"].append({"name": sa, "status": "inactive"})
         if agent_key == "hermes":
             _populate_hermes_telemetry(result, result["status"])
+        elif agent_key == "openclaw":
+            _populate_openclaw_telemetry(result, result["status"])
     except Exception as e:
         result["status"] = "error"
         result["error"] = str(e)
         if agent_key == "hermes":
             _populate_hermes_telemetry(result, result["status"])
+        elif agent_key == "openclaw":
+            _populate_openclaw_telemetry(result, result["status"])
 
     return result
 

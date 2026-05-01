@@ -106,6 +106,27 @@ function AgentPanel({ agent }: { agent: AgentData }) {
         <span className="text-xs text-muted-foreground">{formatUptime(agent.uptime_seconds)} uptime</span>
       </div>
 
+      <div className="p-3 rounded-lg bg-white/5 space-y-1">
+        <div className="flex justify-between text-sm gap-4">
+          <span className="text-muted-foreground">Current Task</span>
+          <span className="text-right">{getTaskSummary(agent)}</span>
+        </div>
+        <div className="flex justify-between text-sm gap-4">
+          <span className="text-muted-foreground">Model</span>
+          <span className="text-right font-[family-name:var(--font-data)] text-accent">{agent.model ?? "Not reported"}</span>
+        </div>
+        <div className="flex justify-between text-sm gap-4">
+          <span className="text-muted-foreground">Session Tokens</span>
+          <span className="text-right font-[family-name:var(--font-data)]">
+            {typeof agent.tokens_session === "number" ? formatNumber(agent.tokens_session) : "Not wired"}
+          </span>
+        </div>
+        <div className="flex justify-between text-sm gap-4">
+          <span className="text-muted-foreground">Container</span>
+          <span className="text-right font-[family-name:var(--font-data)] text-xs">{agent.container ?? "Unknown"}</span>
+        </div>
+      </div>
+
       {hasSubagents ? (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -147,28 +168,7 @@ function AgentPanel({ agent }: { agent: AgentData }) {
             </tbody>
           </table>
         </div>
-      ) : (
-        <div className="p-3 rounded-lg bg-white/5 space-y-1">
-          <div className="flex justify-between text-sm gap-4">
-            <span className="text-muted-foreground">Current Task</span>
-            <span className="text-right">{getTaskSummary(agent)}</span>
-          </div>
-          <div className="flex justify-between text-sm gap-4">
-            <span className="text-muted-foreground">Model</span>
-            <span className="text-right font-[family-name:var(--font-data)] text-accent">{agent.model ?? "Not reported"}</span>
-          </div>
-          <div className="flex justify-between text-sm gap-4">
-            <span className="text-muted-foreground">Session Tokens</span>
-            <span className="text-right font-[family-name:var(--font-data)]">
-              {typeof agent.tokens_session === "number" ? formatNumber(agent.tokens_session) : "Not wired"}
-            </span>
-          </div>
-          <div className="flex justify-between text-sm gap-4">
-            <span className="text-muted-foreground">Container</span>
-            <span className="text-right font-[family-name:var(--font-data)] text-xs">{agent.container ?? "Unknown"}</span>
-          </div>
-        </div>
-      )}
+      ) : null}
 
       <div className="rounded-lg border border-white/10 bg-white/5 p-3 space-y-2">
         <div className="text-xs text-muted-foreground uppercase tracking-wider font-[family-name:var(--font-display)]">

@@ -1,7 +1,9 @@
+import json
 import os
 import sqlite3
 from collections import defaultdict
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
@@ -9,6 +11,8 @@ from fastapi import APIRouter
 router = APIRouter(tags=["tokens"])
 
 STATE_DB_PATH = os.environ.get("HERMES_STATE_DB", "/opt/data/state.db")
+OPENCLAW_STATE_DIR = Path(os.environ.get("OPENCLAW_STATE_DIR", "/data/.openclaw"))
+OPENCLAW_AGENTS_DIR = OPENCLAW_STATE_DIR / "agents"
 
 PROVIDER_ALIASES = {
     "anthropic": "anthropic",
@@ -27,7 +31,7 @@ PROVIDER_LABELS = {
 }
 
 
-def _safe_connect(path: str) -> sqlite3.Connection | None:
+def _safe_connect(path: str | Path) -> sqlite3.Connection | None:
     if not os.path.exists(path):
         return None
     try:
@@ -127,21 +131,21 @@ def _recent_session_rows(conn: sqlite3.Connection, provider: str) -> list[sqlite
     ).fetchall()
 
 
-def _hourly_from_rows(rows: list[sqlite3.Row], since_ts: float) -> list[dict[str, Any]]:
+def _hourly_from_rows(rows: list[dict[str, Any]], since_ts: float, *, milliseconds: bool = False) -> list[dict[str, Any]]:
     buckets: dict[str, dict[str, Any]] = defaultdict(lambda: {"input": 0, "output": 0, "requests": 0})
     for row in rows:
-        started_at = float(row["started_at"] or 0)
+        raw_ts = row.get("updatedAt") if milliseconds else row.get("started_at")
+        started_at = float(raw_ts or 0)
+        if milliseconds:
+            started_at /= 1000.0
         if started_at < since_ts:
             continue
         hour_key = datetime.fromtimestamp(started_at, timezone.utc).replace(minute=0, second=0, microsecond=0).isoformat()
-        buckets[hour_key]["input"] += int(row["input_tokens"] or 0)
-        buckets[hour_key]["output"] += int(row["output_tokens"] or 0)
-        buckets[hour_key]["requests"] += int(row["api_call_count"] or 0)
+        buckets[hour_key]["input"] += int(row.get("input_tokens") or 0)
+        buckets[hour_key]["output"] += int(row.get("output_tokens") or 0)
+        buckets[hour_key]["requests"] += int(row.get("api_call_count") or row.get("request_count") or 0)
 
-    points = []
-    for hour_key in sorted(buckets.keys()):
-        points.append({"hour": hour_key, **buckets[hour_key]})
-    return points
+    return [{"hour": hour_key, **buckets[hour_key]} for hour_key in sorted(buckets.keys())]
 
 
 def _recent_requests(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
@@ -174,7 +178,7 @@ def _recent_requests(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
     return out
 
 
-def _build_provider_payload(provider: str) -> dict[str, Any]:
+def _build_provider_payload_from_hermes(provider: str) -> dict[str, Any]:
     conn = _safe_connect(STATE_DB_PATH)
     if conn is None:
         return _default_payload(provider, f"State DB not available at {STATE_DB_PATH}")
@@ -211,7 +215,7 @@ def _build_provider_payload(provider: str) -> dict[str, Any]:
             },
             "models": model_rows,
             "recent_requests": _recent_requests(recent_rows),
-            "hourly": _hourly_from_rows(recent_rows, last_24h_start),
+            "hourly": _hourly_from_rows([dict(r) for r in recent_rows], last_24h_start),
         }
 
         if not model_rows and not payload["recent_requests"] and payload["today"]["requests"] == 0:
@@ -223,6 +227,152 @@ def _build_provider_payload(provider: str) -> dict[str, Any]:
         return _default_payload(provider, f"Telemetry query failed: {exc}")
     finally:
         conn.close()
+
+
+def _load_openclaw_sessions() -> list[dict[str, Any]]:
+    sessions: list[dict[str, Any]] = []
+    if not OPENCLAW_AGENTS_DIR.exists():
+        return sessions
+
+    def classify_session_key(session_key: str) -> str:
+        if ":heartbeat" in session_key:
+            return "heartbeat"
+        if ":run:" in session_key:
+            return "run"
+        if ":subagent:" in session_key:
+            return "subagent"
+        if ":cron:" in session_key:
+            return "cron"
+        if ":telegram:" in session_key:
+            return "chat"
+        if session_key.endswith(":main"):
+            return "main"
+        return "other"
+
+    def dedupe(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        by_identity: dict[str, dict[str, Any]] = {}
+
+        def rank(row: dict[str, Any]) -> tuple[int, float]:
+            kind = str(row.get("sessionKind") or "")
+            session_id = row.get("sessionId")
+            canonical_bonus = 0 if kind != "run" else -1
+            heartbeat_penalty = -2 if kind == "heartbeat" else 0
+            has_session_bonus = 1 if session_id else 0
+            updated = float(row.get("updatedAt") or 0)
+            return (canonical_bonus + heartbeat_penalty + has_session_bonus, updated)
+
+        for row in rows:
+            identity = str(row.get("sessionId") or row.get("key") or "")
+            if not identity:
+                continue
+            current = by_identity.get(identity)
+            if current is None or rank(row) > rank(current):
+                by_identity[identity] = row
+
+        deduped = list(by_identity.values())
+        deduped.sort(key=lambda item: float(item.get("updatedAt") or 0), reverse=True)
+        return deduped
+
+    for store_path in OPENCLAW_AGENTS_DIR.glob("*/sessions/sessions.json"):
+        try:
+            data = json.loads(store_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        for session_key, payload in data.items():
+            if not isinstance(payload, dict):
+                continue
+            row = dict(payload)
+            row["key"] = session_key
+            row["sessionKind"] = classify_session_key(session_key)
+            row["provider"] = row.get("modelProvider")
+            row["input_tokens"] = int(row.get("inputTokens") or 0)
+            row["output_tokens"] = int(row.get("outputTokens") or 0)
+            row["api_call_count"] = int(row.get("requestCount") or 1)
+            sessions.append(row)
+    return dedupe(sessions)
+
+
+def _build_provider_payload_from_openclaw(provider: str) -> dict[str, Any] | None:
+    sessions = [row for row in _load_openclaw_sessions() if row.get("provider") == provider]
+    if not sessions:
+        return None
+
+    today_start, month_start, last_24h_start = _period_starts()
+
+    def in_period(row: dict[str, Any], start_ts: float) -> bool:
+        updated_at = float(row.get("updatedAt") or 0) / 1000.0
+        return updated_at >= start_ts
+
+    def summarize(rows: list[dict[str, Any]]) -> dict[str, int]:
+        return {
+            "input_tokens": sum(int(row.get("input_tokens") or 0) for row in rows),
+            "output_tokens": sum(int(row.get("output_tokens") or 0) for row in rows),
+            "requests": sum(max(1, int(row.get("api_call_count") or 0)) for row in rows),
+        }
+
+    model_buckets: dict[str, dict[str, Any]] = defaultdict(lambda: {"input_tokens": 0, "output_tokens": 0, "requests": 0})
+    for row in sessions:
+        model = row.get("model") or "<unknown>"
+        model_buckets[model]["input_tokens"] += int(row.get("input_tokens") or 0)
+        model_buckets[model]["output_tokens"] += int(row.get("output_tokens") or 0)
+        model_buckets[model]["requests"] += max(1, int(row.get("api_call_count") or 0))
+
+    recent_requests = []
+    for row in sessions[:10]:
+        updated_at = float(row.get("updatedAt") or 0) / 1000.0
+        recent_requests.append(
+            {
+                "timestamp": datetime.fromtimestamp(updated_at, timezone.utc).isoformat(),
+                "model": row.get("model") or "<unknown>",
+                "input_tokens": int(row.get("input_tokens") or 0),
+                "output_tokens": int(row.get("output_tokens") or 0),
+                "total_tokens": int(row.get("totalTokens") or 0),
+                "latency_ms": 0,
+                "status": "active" if not row.get("abortedLastRun") else "aborted",
+                "source": row.get("key"),
+                "title": row.get("origin", {}).get("label") if isinstance(row.get("origin"), dict) else None,
+                "session_id": row.get("sessionId"),
+                "request_count": max(1, int(row.get("api_call_count") or 0)),
+            }
+        )
+
+    models = [
+        {"model": model, **values}
+        for model, values in sorted(
+            model_buckets.items(),
+            key=lambda item: item[1]["input_tokens"] + item[1]["output_tokens"],
+            reverse=True,
+        )[:12]
+    ]
+
+    return {
+        "provider": provider,
+        "label": PROVIDER_LABELS.get(provider, provider),
+        "available": True,
+        "source": "openclaw-session-stores",
+        "note": "Aggregated from live OpenClaw session stores; date buckets use each session's last update time.",
+        "rate_limit": {
+            "rpm": 0,
+            "tpm": 0,
+            "rpm_used": 0,
+            "tpm_used": 0,
+            "known": False,
+        },
+        "today": summarize([row for row in sessions if in_period(row, today_start)]),
+        "month": summarize([row for row in sessions if in_period(row, month_start)]),
+        "models": models,
+        "recent_requests": recent_requests,
+        "hourly": _hourly_from_rows(sessions, last_24h_start, milliseconds=True),
+    }
+
+
+def _build_provider_payload(provider: str) -> dict[str, Any]:
+    openclaw_payload = _build_provider_payload_from_openclaw(provider)
+    if openclaw_payload is not None:
+        return openclaw_payload
+    return _build_provider_payload_from_hermes(provider)
 
 
 @router.get("/tokens/{provider}")
