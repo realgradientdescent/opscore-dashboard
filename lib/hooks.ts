@@ -1,5 +1,4 @@
 "use client";
-
 import useSWR from "swr";
 import type {
   HealthData,
@@ -7,6 +6,7 @@ import type {
   AgentData,
   TokenProvider,
   CostData,
+  AlertData,
 } from "./api";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -36,5 +36,11 @@ export function useTokens(provider: string) {
 export function useCosts() {
   return useSWR<CostData>("/api/costs", fetcher, {
     refreshInterval: 300000,
+  });
+}
+
+export function useAlerts() {
+  return useSWR<AlertData>("/api/alerts", fetcher, {
+    refreshInterval: 30000,
   });
 }

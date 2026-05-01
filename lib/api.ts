@@ -99,11 +99,52 @@ export interface TokenProvider {
 }
 
 export interface CostData {
+  available?: boolean;
+  source?: string;
+  note?: string;
   today_total: number;
   month_total: number;
   projected_month: number;
-  daily: { date: string; anthropic: number; openai: number; openrouter: number }[];
+  currency: string;
+  budget_monthly?: number | null;
+  daily: { date: string; anthropic: number; openai: number; openrouter: number; custom?: number }[];
   models: { provider: string; model: string; input_tokens: number; output_tokens: number; requests: number; cost: number }[];
+  month_totals_by_provider?: Record<string, number>;
+  cost_status_breakdown?: Record<string, number>;
+}
+
+export interface AlertItem {
+  id: string;
+  severity: string;
+  message: string;
+  detail: string;
+  time: string;
+  source?: string;
+}
+
+export interface AlertRule {
+  id: string;
+  condition: string;
+  severity: string;
+  channel: string;
+  enabled: boolean;
+  triggered: boolean;
+  detail?: string;
+}
+
+export interface AlertData {
+  source?: string;
+  note?: string;
+  generated_at?: string;
+  summary: {
+    active_count: number;
+    critical_count: number;
+    warning_count: number;
+    info_count: number;
+  };
+  active: AlertItem[];
+  history: (AlertItem & { resolved?: boolean })[];
+  rules: AlertRule[];
 }
 
 export const api = {
@@ -112,4 +153,5 @@ export const api = {
   agents: () => fetchApi<AgentData[]>("/agents"),
   tokens: (provider: string) => fetchApi<TokenProvider>(`/tokens?provider=${provider}`),
   costs: () => fetchApi<CostData>("/costs"),
+  alerts: () => fetchApi<AlertData>("/alerts"),
 };

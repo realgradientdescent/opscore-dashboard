@@ -6,18 +6,13 @@ const API_KEY = process.env.VPS_AGENT_API_KEY ?? "";
 function unavailable(status = 503) {
   return NextResponse.json(
     {
-      available: false,
       source: "unavailable",
-      note: "Cost telemetry backend unreachable",
-      today_total: 0,
-      month_total: 0,
-      projected_month: 0,
-      currency: "USD",
-      budget_monthly: null,
-      daily: [],
-      models: [],
-      month_totals_by_provider: {},
-      cost_status_breakdown: {},
+      note: "Alert telemetry backend unreachable",
+      generated_at: new Date().toISOString(),
+      summary: { active_count: 0, critical_count: 0, warning_count: 0, info_count: 0 },
+      active: [],
+      history: [],
+      rules: [],
     },
     { status }
   );
@@ -25,7 +20,7 @@ function unavailable(status = 503) {
 
 export async function GET() {
   try {
-    const res = await fetch(`${AGENT_URL}/costs`, {
+    const res = await fetch(`${AGENT_URL}/alerts`, {
       headers: { "X-API-Key": API_KEY },
       next: { revalidate: 0 },
     });

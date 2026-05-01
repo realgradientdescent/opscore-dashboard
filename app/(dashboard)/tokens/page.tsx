@@ -68,7 +68,7 @@ export default function TokensPage() {
       <div className="glass-card p-4 flex flex-col gap-2">
         <div className="flex items-center gap-2 text-sm font-medium">
           <Database className="w-4 h-4 text-accent" />
-          {data?.label ?? providerMeta[activeProvider].label} telemetry source
+          {providerMeta[activeProvider].label} usage source
         </div>
         <div className="text-xs text-muted-foreground">
           {isLoading ? "Loading…" : data?.source ?? "unknown"}
@@ -101,7 +101,7 @@ export default function TokensPage() {
             </div>
           ) : (
             <div className="w-full rounded-lg border border-dashed border-white/10 bg-white/5 p-4 text-sm text-muted-foreground text-center">
-              Rate-limit telemetry is not wired from Hermes yet.
+              Rate-limit telemetry is not wired for this source yet.
             </div>
           )}
         </div>

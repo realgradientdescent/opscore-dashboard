@@ -1,5 +1,4 @@
 "use client";
-
 import {
   BarChart,
   Bar,
@@ -15,6 +14,7 @@ interface CostDataPoint {
   anthropic: number;
   openai: number;
   openrouter: number;
+  custom?: number;
 }
 
 export default function CostBreakdownChart({
@@ -22,6 +22,8 @@ export default function CostBreakdownChart({
 }: {
   data: CostDataPoint[];
 }) {
+  const hasCustom = data.some((point) => (point.custom ?? 0) > 0);
+
   return (
     <div className="h-64">
       <ResponsiveContainer width="100%" height="100%">
@@ -50,12 +52,11 @@ export default function CostBreakdownChart({
             }}
             formatter={(value) => [typeof value === "number" ? `$${value.toFixed(2)}` : value, undefined]}
           />
-          <Legend
-            wrapperStyle={{ fontSize: 11, color: "#94a3b8" }}
-          />
+          <Legend wrapperStyle={{ fontSize: 11, color: "#94a3b8" }} />
           <Bar dataKey="anthropic" fill="#00d9ff" radius={[2, 2, 0, 0]} name="Anthropic" />
-          <Bar dataKey="openai" fill="#10b981" radius={[2, 2, 0, 0]} name="OpenAI" />
+          <Bar dataKey="openai" fill="#10b981" radius={[2, 2, 0, 0]} name="OpenAI/Codex" />
           <Bar dataKey="openrouter" fill="#f59e0b" radius={[2, 2, 0, 0]} name="OpenRouter" />
+          {hasCustom ? <Bar dataKey="custom" fill="#8b5cf6" radius={[2, 2, 0, 0]} name="Custom" /> : null}
         </BarChart>
       </ResponsiveContainer>
     </div>

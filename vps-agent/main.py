@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 
 load_dotenv()
 
-API_KEY = os.getenv("API_KEY", "")
+API_KEY = os.getenv("OPSCORE_API_KEY", "")
 
 app = FastAPI(title="OpsCore VPS Agent", version="1.0.0")
 
@@ -30,13 +30,14 @@ async def verify_api_key(request: Request, call_next):
     return await call_next(request)
 
 
-from routers import health, containers, agents, tokens, costs
+from routers import health, containers, agents, tokens, costs, alerts
 
 app.include_router(health.router)
 app.include_router(containers.router)
 app.include_router(agents.router)
 app.include_router(tokens.router)
 app.include_router(costs.router)
+app.include_router(alerts.router)
 
 
 @app.get("/")
