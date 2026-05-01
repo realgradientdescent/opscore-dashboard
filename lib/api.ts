@@ -48,6 +48,8 @@ export interface AgentData {
   status: string;
   uptime_seconds: number;
   last_activity?: string | null;
+  last_activity_at?: string | null;
+  last_inbound?: string | null;
   subagents?: {
     name: string;
     status: string;
@@ -55,16 +57,24 @@ export interface AgentData {
     tokens_session?: number;
     last_active?: string | null;
   }[];
-  tokens_session?: number;
+  tokens_session?: number | null;
   current_task?: string | null;
   model?: string | null;
+  provider?: string | null;
   container?: string;
   error?: string | null;
+  session_id?: string | null;
+  session_source?: string | null;
+  api_calls_session?: number | null;
 }
 
 export interface TokenProvider {
   provider: string;
-  rate_limit: { rpm: number; tpm: number; rpm_used: number; tpm_used: number };
+  label?: string;
+  available?: boolean;
+  source?: string;
+  note?: string;
+  rate_limit: { rpm: number; tpm: number; rpm_used: number; tpm_used: number; known?: boolean };
   today: { input_tokens: number; output_tokens: number; requests: number };
   month: { input_tokens: number; output_tokens: number; requests: number };
   models: { model: string; input_tokens: number; output_tokens: number; requests: number }[];
@@ -75,6 +85,16 @@ export interface TokenProvider {
     output_tokens: number;
     latency_ms: number;
     status: string;
+    source?: string;
+    title?: string | null;
+    session_id?: string;
+    request_count?: number;
+  }[];
+  hourly?: {
+    hour: string;
+    input: number;
+    output: number;
+    requests?: number;
   }[];
 }
 
