@@ -10,12 +10,12 @@ router = APIRouter(tags=["agents"])
 
 AGENT_CONTAINERS = {
     "openclaw": {
-        "container_name": "openclaw-1ovr",
+        "container_name": os.environ.get("OPENCLAW_CONTAINER_NAME", "openclaw-1ovr"),
         "display_name": "OpenClaw",
         "subagents": ["Researcher", "Writer", "Reviewer", "Publisher"],
     },
     "hermes": {
-        "container_name": "hermes-agent-6aos",
+        "container_name": os.environ.get("HERMES_CONTAINER_NAME", "hermes-agent-6aos"),
         "display_name": "Hermes",
         "subagents": [],
     },
