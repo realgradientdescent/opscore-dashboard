@@ -7,7 +7,7 @@ services:
     restart: always
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /opt/data:/opt/data:ro
+      - /docker/hermes-agent-6aos/data:/opt/data:ro
     environment:
       - API_KEY=${OPSCORE_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
