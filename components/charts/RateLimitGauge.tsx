@@ -6,22 +6,26 @@ interface RateLimitGaugeProps {
   label: string;
   percent: number;
   sublabel?: string;
+  unknown?: boolean;
 }
 
 export default function RateLimitGauge({
   label,
   percent,
   sublabel,
+  unknown = false,
 }: RateLimitGaugeProps) {
   const radius = 45;
   const circumference = 2 * Math.PI * radius;
-  const offset = circumference - (percent / 100) * circumference;
-  const color =
-    percent >= 95
+  const displayPct = unknown ? 0 : Math.min(100, Math.max(0, percent));
+  const offset = circumference - (displayPct / 100) * circumference;
+  const color = unknown
+    ? "#475569"
+    : percent >= 95
       ? "#f43f5e"
       : percent >= 80
-      ? "#f59e0b"
-      : "#00d9ff";
+        ? "#f59e0b"
+        : "#00d9ff";
 
   return (
     <div className="flex flex-col items-center gap-2">
@@ -35,25 +39,40 @@ export default function RateLimitGauge({
             stroke="rgba(255,255,255,0.05)"
             strokeWidth="8"
           />
-          <circle
-            cx="50"
-            cy="50"
-            r={radius}
-            fill="none"
-            stroke={color}
-            strokeWidth="8"
-            strokeLinecap="round"
-            strokeDasharray={circumference}
-            strokeDashoffset={offset}
-            style={{ transition: "stroke-dashoffset 0.5s ease" }}
-          />
+          {!unknown && (
+            <circle
+              cx="50"
+              cy="50"
+              r={radius}
+              fill="none"
+              stroke={color}
+              strokeWidth="8"
+              strokeLinecap="round"
+              strokeDasharray={circumference}
+              strokeDashoffset={offset}
+              style={{ transition: "stroke-dashoffset 0.5s ease" }}
+            />
+          )}
+          {unknown && (
+            <circle
+              cx="50"
+              cy="50"
+              r={radius}
+              fill="none"
+              stroke={color}
+              strokeWidth="8"
+              strokeDasharray="4 8"
+              strokeDashoffset={0}
+              style={{ opacity: 0.3 }}
+            />
+          )}
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           <span
             className="text-lg font-bold font-[family-name:var(--font-data)] tabular-nums"
-            style={{ color }}
+            style={{ color: unknown ? "#475569" : color }}
           >
-            {percent.toFixed(0)}%
+            {unknown ? "?" : `${displayPct}%`}
           </span>
         </div>
       </div>
